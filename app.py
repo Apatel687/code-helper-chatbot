@@ -4,37 +4,42 @@ import requests
 # =========================
 # API Key Setup
 # =========================
-# Fallback to a local variable for testing
-API_KEY = st.secrets.get("OPENROUTER_API_KEY", "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")
+API_KEY = st.secrets.get("OPENROUTER_API_KEY")
 
 if not API_KEY:
-    st.error("API key not found! Set OPENROUTER_API_KEY in Streamlit secrets or here for local testing.")
+    st.error(
+        "API key not found! Set OPENROUTER_API_KEY in Streamlit secrets "
+        "or as an environment variable."
+    )
     st.stop()
 
 # =========================
-# OpenRouter API
+# OpenRouter API & Model
 # =========================
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL_NAME = "openai/gpt-oss-20b:free"
+MODEL_NAME = "qwen/qwen3-coder:free"  # Qwen3-Coder free model for coding tasks
 
 # =========================
-# Streamlit page setup
+# Streamlit Page Config
 # =========================
 st.set_page_config(page_title="Code Helper Chatbot", page_icon="💻")
 st.title("🧠 Code Helper Chatbot")
 st.markdown("Ask me to write, debug, or explain Python code.")
 
 # =========================
-# Chat messages
+# Chat Message State
 # =========================
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "system", "content": "You are a helpful Python assistant."}]
+    st.session_state.messages = [
+        {"role": "system", "content": "You are a helpful Python assistant."}
+    ]
 
+# Show previous chat messages
 for msg in st.session_state.messages[1:]:
     st.chat_message(msg["role"]).write(msg["content"])
 
 # =========================
-# User input
+# User Input
 # =========================
 if prompt := st.chat_input("What code help do you need?"):
     st.chat_message("user").write(prompt)
@@ -60,6 +65,7 @@ if prompt := st.chat_input("What code help do you need?"):
             reply = response.json()["choices"][0]["message"]["content"]
             st.chat_message("assistant").write(reply)
             st.session_state.messages.append({"role": "assistant", "content": reply})
+
 
 
 
