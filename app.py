@@ -1,3 +1,6 @@
+# Add this line at the top temporarily
+print("Redeploy test")
+
 import streamlit as st
 import requests
 
