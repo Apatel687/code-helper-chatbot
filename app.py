@@ -11,19 +11,22 @@ st.title("🧠 Code Helper Chatbot")
 st.caption("Free tier via Hugging Face Inference API. Smaller models recommended.")
 
 # -----------------------------
-# Load HF API key from secrets or environment
+# Load HF API key from secrets or env
 # -----------------------------
 def _read_hf_key():
     try:
-        key = st.secrets.get("HF_API_KEY")  # root-level
+        # Streamlit Cloud: root-level
+        key = st.secrets.get("HF_API_KEY")
         if key:
             return key
-        gen = st.secrets.get("general")  # optional [general] section
+        # Streamlit Cloud: [general] section
+        gen = st.secrets.get("general")
         if isinstance(gen, dict) and gen.get("HF_API_KEY"):
             return gen.get("HF_API_KEY")
     except Exception:
         pass
-    return os.environ.get("HF_API_KEY")  # fallback
+    # Fallback: environment variable
+    return os.environ.get("HF_API_KEY")
 
 HF_API_KEY = _read_hf_key()
 
@@ -31,7 +34,9 @@ if not HF_API_KEY:
     st.error(
         "HF API key not found.\n\n"
         "Add a secret named **HF_API_KEY** in Streamlit Cloud → App → Settings → Secrets.\n"
-        "TOML format (top-level):\nHF_API_KEY = 'hf_xxx...'"
+        "TOML format (top-level):\n\n"
+        'HF_API_KEY = "hf_xxx..."\n\n'
+        "Do NOT wrap it inside [general] unless your code reads it there."
     )
     st.stop()
 
@@ -41,9 +46,9 @@ if not HF_API_KEY:
 with st.sidebar:
     st.subheader("Model settings")
     model_id = st.text_input(
-        "Hugging Face model ID",
-        value="bigcode/starcoder",  # valid free code model
-        help="Pick a free Hugging Face model. Smaller models work best on free API."
+        "Hugging Face model id",
+        value="OpenAssistant/phi-3-mini",
+        help="Lightweight free model for chat/code tasks."
     )
     max_new_tokens = st.slider("Max new tokens", 16, 512, 256, 16)
     temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.1)
@@ -71,7 +76,7 @@ if "messages" not in st.session_state:
         {"role": "system", "content": "You are a helpful Python assistant."}
     ]
 
-# Show history
+# Show previous chat messages
 for m in st.session_state.messages:
     if m["role"] in ("user", "assistant"):
         st.chat_message(m["role"]).write(m["content"])
@@ -87,16 +92,17 @@ def build_prompt(messages):
             system = m["content"]
     if system:
         parts.append(f"System: {system}\n")
+
     for m in messages:
         if m["role"] == "user":
             parts.append(f"User: {m['content']}\n")
         elif m["role"] == "assistant":
             parts.append(f"Assistant: {m['content']}\n")
-    parts.append("Assistant:")  # model continues as assistant
+    parts.append("Assistant:")
     return "\n".join(parts)
 
 # -----------------------------
-# Hugging Face API call
+# Hugging Face Inference API call
 # -----------------------------
 def hf_generate(model_id: str, prompt: str, max_new_tokens: int, temperature: float, top_p: float) -> str:
     url = f"https://api-inference.huggingface.co/models/{model_id}"
@@ -127,19 +133,21 @@ def hf_generate(model_id: str, prompt: str, max_new_tokens: int, temperature: fl
                     continue
                 raise RuntimeError(msg)
             return str(data)
+
         if r.status_code == 503:
             try:
-                info = r.json()
-                wait = info.get("estimated_time", 5)
+                wait = r.json().get("estimated_time", 5)
             except Exception:
                 wait = 5
             time.sleep(wait)
             continue
+
         if r.status_code == 429:
-            raise RuntimeError("Rate limited by HF free API (429). Try again in a minute or switch to a smaller model.")
+            raise RuntimeError("Rate limited by HF free API (429). Try again later or use a smaller model.")
+
         r.raise_for_status()
 
-    raise TimeoutError("Model did not load in time. Try a smaller model.")
+    raise TimeoutError("Model did not load in time. Try again or use a smaller model.")
 
 # -----------------------------
 # Chat input and response
@@ -169,7 +177,8 @@ if prompt := st.chat_input("What code help do you need?"):
 # -----------------------------
 # Footer
 # -----------------------------
-st.caption("Tip: Smaller models are faster and more reliable on free API.")
+st.caption("Tip: If you hit loading or rate limits, pick a smaller model in the sidebar.")
+
 
 
 
