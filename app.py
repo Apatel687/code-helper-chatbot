@@ -1,11 +1,15 @@
-# Add this line at the top temporarily
-print("Redeploy test")
-
 import streamlit as st
 import requests
 
 # =========================
-# API Key Setup
+# Streamlit Page Config
+# =========================
+st.set_page_config(page_title="Code Helper Chatbot", page_icon="💻")
+st.title("🧠 Code Helper Chatbot")
+st.markdown("Ask me to write, debug, or explain Python code.")
+
+# =========================
+# Load API Key from Secrets
 # =========================
 API_KEY = st.secrets.get("OPENROUTER_API_KEY")
 
@@ -16,18 +20,14 @@ if not API_KEY:
     )
     st.stop()
 
+# Debug info (optional, shows if key is loaded)
+st.write("API key loaded:", bool(API_KEY))
+
 # =========================
 # OpenRouter API & Model
 # =========================
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL_NAME = "qwen/qwen3-coder:free"  # Qwen3-Coder free model for coding tasks
-
-# =========================
-# Streamlit Page Config
-# =========================
-st.set_page_config(page_title="Code Helper Chatbot", page_icon="💻")
-st.title("🧠 Code Helper Chatbot")
-st.markdown("Ask me to write, debug, or explain Python code.")
 
 # =========================
 # Chat Message State
@@ -68,8 +68,4 @@ if prompt := st.chat_input("What code help do you need?"):
             reply = response.json()["choices"][0]["message"]["content"]
             st.chat_message("assistant").write(reply)
             st.session_state.messages.append({"role": "assistant", "content": reply})
-
-
-
-
 
