@@ -1,28 +1,42 @@
 import streamlit as st
 import requests
+import os
 
-# ✅ Replace this with your real OpenRouter API key
-API_KEY = st.secrets["OPENROUTER_API_KEY"]
+# =========================
+# API Key Setup
+# =========================
+API_KEY = st.secrets.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
 
-# 📍 OpenRouter API endpoint
+if not API_KEY:
+    st.error("API key not found! Please set OPENROUTER_API_KEY in Streamlit secrets.")
+    st.stop()
+
+# OpenRouter API endpoint and model
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-# 🤖 Model to use (openai/gpt-oss-20b:free)
 MODEL_NAME = "openai/gpt-oss-20b:free"
 
+# =========================
+# Streamlit Page Config
+# =========================
 st.set_page_config(page_title="Code Helper Chatbot", page_icon="💻")
 st.title("🧠 Code Helper Chatbot")
 st.markdown("Ask me to write, debug, or explain Python code.")
 
-# Save messages across runs
+# =========================
+# Chat Message Handling
+# =========================
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "system", "content": "You are a helpful Python assistant."}]
+    st.session_state.messages = [
+        {"role": "system", "content": "You are a helpful Python assistant."}
+    ]
 
-# Show previous chat messages
+# Display previous messages
 for msg in st.session_state.messages[1:]:
     st.chat_message(msg["role"]).write(msg["content"])
 
-# User input
+# =========================
+# User Input
+# =========================
 if prompt := st.chat_input("What code help do you need?"):
     st.chat_message("user").write(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -30,7 +44,6 @@ if prompt := st.chat_input("What code help do you need?"):
     with st.spinner("Thinking..."):
         headers = {
             "Authorization": f"Bearer {API_KEY}",
-            "HTTP-Referer": "http://localhost:8501",  # Required by OpenRouter
             "Content-Type": "application/json"
         }
 
@@ -39,13 +52,15 @@ if prompt := st.chat_input("What code help do you need?"):
             "messages": st.session_state.messages
         }
 
-        response = requests.post(API_URL, headers=headers, json=data)
-
-        if response.status_code == 200:
+        try:
+            response = requests.post(API_URL, headers=headers, json=data)
+            response.raise_for_status()  # Raise error if status != 200
+        except requests.exceptions.RequestException as e:
+            st.error(f"API request failed: {e}")
+        else:
             reply = response.json()["choices"][0]["message"]["content"]
             st.chat_message("assistant").write(reply)
             st.session_state.messages.append({"role": "assistant", "content": reply})
-        else:
-            st.error("Something went wrong: " + response.text)
+
 
 
