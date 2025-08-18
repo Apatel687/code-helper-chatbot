@@ -1,7 +1,6 @@
+# trigger rebuild for Streamlit secrets
 import streamlit as st
 import requests
-
-# trigger rebuild for Streamlit secrets
 
 
 # =========================
