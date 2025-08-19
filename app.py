@@ -2,142 +2,145 @@ import os
 import time
 import requests
 import streamlit as st
-from PIL import Image
-from io import BytesIO
 
 # -----------------------------
 # Page UI
 # -----------------------------
-st.set_page_config(page_title="🧠 AI Chat + Image Generator", page_icon="🤖")
-st.title("🧠 AI Chat + Image Generator")
-st.caption("Text chat using OpenRouter free GPT model + Text-to-Image via Hugging Face free API")
+st.set_page_config(page_title="🧠 Code Helper Chatbot", page_icon="💻")
+st.title("🧠 Code Helper Chatbot")
+st.caption("Free tier: OpenRouter GPT-OSS for chat + Hugging Face Stable Diffusion for images")
 
 # -----------------------------
 # Load API keys
 # -----------------------------
-def _read_openrouter_key():
-    key = st.secrets.get("OPENROUTER_API_KEY")
-    if key:
-        return key
-    return os.environ.get("OPENROUTER_API_KEY")
+def _read_key(name):
+    try:
+        key = st.secrets.get(name)
+        if key:
+            return key
+        gen = st.secrets.get("general")
+        if isinstance(gen, dict) and gen.get(name):
+            return gen.get(name)
+    except Exception:
+        pass
+    return os.environ.get(name)
 
-def _read_hf_key():
-    key = st.secrets.get("HF_API_KEY")
-    if key:
-        return key
-    return os.environ.get("HF_API_KEY")
+OPENROUTER_KEY = _read_key("OPENROUTER_API_KEY")
+HF_KEY = _read_key("HF_API_KEY")
 
-OPENROUTER_API_KEY = _read_openrouter_key()
-HF_API_KEY = _read_hf_key()
-
-if not OPENROUTER_API_KEY:
-    st.error("Set OPENROUTER_API_KEY in Streamlit secrets or environment variable.")
-    st.stop()
-if not HF_API_KEY:
-    st.error("Set HF_API_KEY in Streamlit secrets or environment variable.")
+if not OPENROUTER_KEY or not HF_KEY:
+    st.error("Both OPENROUTER_API_KEY and HF_API_KEY are required.")
     st.stop()
 
 # -----------------------------
-# Sidebar
+# Sidebar controls
 # -----------------------------
 with st.sidebar:
-    st.subheader("Model Settings")
-    model_id_text = "openai/gpt-oss-20b:free"
-    model_id_img = "stabilityai/stable-diffusion-2-1"
-    st.markdown("**Chat Model:** " + model_id_text)
-    st.markdown("**Image Model:** " + model_id_img)
-    st.slider("Max tokens for text", 16, 1024, 256, 16, key="max_tokens")
-    st.slider("Temperature", 0.0, 1.5, 0.7, 0.1, key="temperature")
-    st.markdown("---")
+    st.subheader("Model settings")
+    chat_model_id = st.text_input(
+        "Chat model",
+        value="openai/gpt-oss-20b:free",
+        help="OpenRouter GPT-OSS 20B free tier"
+    )
+    image_model_id = st.text_input(
+        "Image model",
+        value="stabilityai/stable-diffusion-2",
+        help="Hugging Face free Stable Diffusion model"
+    )
+    max_tokens = st.slider("Max tokens", 16, 512, 256, 16)
+    temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.1)
+    top_p = st.slider("Top-p", 0.1, 1.0, 0.95, 0.05)
 
 # -----------------------------
 # Chat state
 # -----------------------------
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "system", "content": "You are a helpful AI assistant."}]
+    st.session_state.messages = [
+        {"role": "system", "content": "You are a helpful Python assistant."}
+    ]
 
-# Display chat messages
-for msg in st.session_state.messages:
-    if msg["role"] in ("user", "assistant"):
-        st.chat_message(msg["role"]).write(msg["content"])
+# Show previous messages
+for m in st.session_state.messages:
+    if m["role"] in ("user", "assistant"):
+        st.chat_message(m["role"]).write(m["content"])
 
 # -----------------------------
-# Functions
+# Chat input
 # -----------------------------
 def build_prompt(messages):
-    prompt = ""
+    parts = []
+    system = None
     for m in messages:
         if m["role"] == "system":
-            prompt += f"System: {m['content']}\n"
-        elif m["role"] == "user":
-            prompt += f"User: {m['content']}\n"
+            system = m["content"]
+    if system:
+        parts.append(f"System: {system}\n")
+    for m in messages:
+        if m["role"] == "user":
+            parts.append(f"User: {m['content']}\n")
         elif m["role"] == "assistant":
-            prompt += f"Assistant: {m['content']}\n"
-    prompt += "Assistant:"
-    return prompt
+            parts.append(f"Assistant: {m['content']}\n")
+    parts.append("Assistant:")
+    return "\n".join(parts)
 
-def chat_generate(prompt, max_tokens=256, temperature=0.7):
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
+def chat_generate(prompt: str):
+    url = f"https://openrouter.ai/api/v1/chat/completions"
     payload = {
-        "model": model_id_text,
+        "model": chat_model_id,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
-        "temperature": temperature
+        "temperature": temperature,
+        "top_p": top_p
     }
+    headers = {"Authorization": f"Bearer {OPENROUTER_KEY}"}
     r = requests.post(url, headers=headers, json=payload, timeout=60)
     r.raise_for_status()
     data = r.json()
-    # OpenRouter returns 'choices'
     return data["choices"][0]["message"]["content"]
 
-def generate_image(prompt):
-    url = f"https://api-inference.huggingface.co/models/{model_id_img}"
-    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+# -----------------------------
+# Text-to-Image
+# -----------------------------
+def generate_image(prompt: str):
+    url = f"https://api-inference.huggingface.co/models/{image_model_id}"
+    headers = {"Authorization": f"Bearer {HF_KEY}"}
     payload = {"inputs": prompt}
-    r = requests.post(url, headers=headers, json=payload, timeout=120)
+    r = requests.post(url, headers=headers, json=payload, timeout=60)
     r.raise_for_status()
-    # Hugging Face returns bytes in 'content'
-    img_bytes = BytesIO(r.content)
-    img = Image.open(img_bytes)
-    return img
+    return r.content
 
 # -----------------------------
-# User input
+# User input type
 # -----------------------------
-tab1, tab2 = st.tabs(["Chat", "Text-to-Image"])
+option = st.radio("Choose input type:", ["Chat", "Generate Image"])
 
-with tab1:
-    if prompt := st.chat_input("Ask me something..."):
+if option == "Chat":
+    if prompt := st.chat_input("Ask me anything about code or AI:"):
         st.chat_message("user").write(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
 
         with st.spinner("Thinking..."):
             try:
-                full_prompt = build_prompt(st.session_state.messages)
-                reply = chat_generate(
-                    full_prompt,
-                    max_tokens=st.session_state.max_tokens,
-                    temperature=st.session_state.temperature,
-                )
+                reply = chat_generate(prompt)
             except Exception as e:
-                reply = f"API error: {e}"
+                st.error(f"Chat API error: {e}")
+                reply = ""
+        if reply:
+            st.chat_message("assistant").write(reply)
+            st.session_state.messages.append({"role": "assistant", "content": reply})
 
-        st.chat_message("assistant").write(reply)
-        st.session_state.messages.append({"role": "assistant", "content": reply})
+elif option == "Generate Image":
+    prompt = st.text_input("Enter image description:")
+    if st.button("Generate Image") and prompt:
+        with st.spinner("Generating image..."):
+            try:
+                img_bytes = generate_image(prompt)
+                st.image(img_bytes)
+            except Exception as e:
+                st.error(f"Image API error: {e}")
 
-with tab2:
-    img_prompt = st.text_area("Enter prompt for image generation:")
-    if st.button("Generate Image"):
-        if img_prompt.strip():
-            with st.spinner("Generating image..."):
-                try:
-                    img = generate_image(img_prompt)
-                    st.image(img, caption="Generated image", use_column_width=True)
-                except Exception as e:
-                    st.error(f"Image API error: {e}")
-        else:
-            st.warning("Please enter a prompt for image generation.")
+st.caption("Tip: Use free APIs. Chat uses OpenRouter GPT-OSS 20B; images use HF Stable Diffusion.")
+
 
 
 
