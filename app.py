@@ -2,158 +2,143 @@ import os
 import time
 import requests
 import streamlit as st
+from PIL import Image
+from io import BytesIO
 
 # -----------------------------
 # Page UI
 # -----------------------------
-st.set_page_config(page_title="🧠 Code Helper Chatbot", page_icon="💻")
-st.title("🧠 Code Helper Chatbot")
-st.caption("Free tier via OpenRouter & Hugging Face APIs. Smaller models recommended for speed.")
+st.set_page_config(page_title="🧠 AI Chat + Image Generator", page_icon="🤖")
+st.title("🧠 AI Chat + Image Generator")
+st.caption("Text chat using OpenRouter free GPT model + Text-to-Image via Hugging Face free API")
 
 # -----------------------------
-# Load API keys from Streamlit secrets or environment
+# Load API keys
 # -----------------------------
-OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
-HF_API_KEY = st.secrets.get("HF_API_KEY") or os.environ.get("HF_API_KEY")
+def _read_openrouter_key():
+    key = st.secrets.get("OPENROUTER_API_KEY")
+    if key:
+        return key
+    return os.environ.get("OPENROUTER_API_KEY")
+
+def _read_hf_key():
+    key = st.secrets.get("HF_API_KEY")
+    if key:
+        return key
+    return os.environ.get("HF_API_KEY")
+
+OPENROUTER_API_KEY = _read_openrouter_key()
+HF_API_KEY = _read_hf_key()
 
 if not OPENROUTER_API_KEY:
-    st.error(
-        "OpenRouter API key not found.\n\n"
-        "Add a secret named **OPENROUTER_API_KEY** in Streamlit Cloud → *App → Settings → Secrets*.\n"
-        'Format: OPENROUTER_API_KEY = "sk-or-xxxx..."'
-    )
+    st.error("Set OPENROUTER_API_KEY in Streamlit secrets or environment variable.")
+    st.stop()
+if not HF_API_KEY:
+    st.error("Set HF_API_KEY in Streamlit secrets or environment variable.")
     st.stop()
 
 # -----------------------------
-# Sidebar for model selection
+# Sidebar
 # -----------------------------
 with st.sidebar:
-    st.subheader("Model settings")
-    use_openrouter = st.checkbox("Use OpenRouter GPT-OSS 20B (free)", value=True)
-    hf_model_id = st.text_input(
-        "Hugging Face model ID",
-        value="meta-llama/Llama-2-7b",
-        help="Enter any Hugging Face model ID you want to use."
-    )
-    max_new_tokens = st.slider("Max new tokens", 16, 1024, 256, 16)
-    temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.05)
-    top_p = st.slider("Top-p", 0.1, 1.0, 0.95, 0.05)
+    st.subheader("Model Settings")
+    model_id_text = "openai/gpt-oss-20b:free"
+    model_id_img = "stabilityai/stable-diffusion-2-1"
+    st.markdown("**Chat Model:** " + model_id_text)
+    st.markdown("**Image Model:** " + model_id_img)
+    st.slider("Max tokens for text", 16, 1024, 256, 16, key="max_tokens")
+    st.slider("Temperature", 0.0, 1.5, 0.7, 0.1, key="temperature")
     st.markdown("---")
-    if st.button("Test API connection"):
-        if use_openrouter:
-            url = "https://openrouter.ai/api/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
-            payload = {"model": "openai/gpt-oss-20b:free", "messages": [{"role": "user", "content": "ping"}]}
-        else:
-            url = f"https://api-inference.huggingface.co/models/{hf_model_id}"
-            headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-            payload = {"inputs": "ping"}
-        try:
-            r = requests.post(url, headers=headers, json=payload, timeout=30)
-            st.write("Status:", r.status_code)
-            st.json(r.json())
-        except Exception as e:
-            st.error(f"Connection error: {e}")
 
 # -----------------------------
 # Chat state
 # -----------------------------
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "system", "content": "You are a helpful Python assistant."}]
+    st.session_state.messages = [{"role": "system", "content": "You are a helpful AI assistant."}]
 
-for m in st.session_state.messages:
-    if m["role"] in ("user", "assistant"):
-        st.chat_message(m["role"]).write(m["content"])
+# Display chat messages
+for msg in st.session_state.messages:
+    if msg["role"] in ("user", "assistant"):
+        st.chat_message(msg["role"]).write(msg["content"])
 
 # -----------------------------
-# Prompt builder
+# Functions
 # -----------------------------
 def build_prompt(messages):
-    parts = []
-    system = None
+    prompt = ""
     for m in messages:
         if m["role"] == "system":
-            system = m["content"]
-    if system:
-        parts.append(f"System: {system}\n")
-    for m in messages:
-        if m["role"] == "user":
-            parts.append(f"User: {m['content']}\n")
+            prompt += f"System: {m['content']}\n"
+        elif m["role"] == "user":
+            prompt += f"User: {m['content']}\n"
         elif m["role"] == "assistant":
-            parts.append(f"Assistant: {m['content']}\n")
-    parts.append("Assistant:")
-    return "\n".join(parts)
+            prompt += f"Assistant: {m['content']}\n"
+    prompt += "Assistant:"
+    return prompt
 
-# -----------------------------
-# OpenRouter API call
-# -----------------------------
-def openrouter_generate(prompt):
+def chat_generate(prompt, max_tokens=256, temperature=0.7):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
     payload = {
-        "model": "openai/gpt-oss-20b:free",
+        "model": model_id_text,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": temperature,
-        "max_tokens": max_new_tokens
+        "max_tokens": max_tokens,
+        "temperature": temperature
     }
     r = requests.post(url, headers=headers, json=payload, timeout=60)
     r.raise_for_status()
     data = r.json()
-    try:
-        return data["choices"][0]["message"]["content"]
-    except Exception:
-        return str(data)
+    # OpenRouter returns 'choices'
+    return data["choices"][0]["message"]["content"]
 
-# -----------------------------
-# Hugging Face API call
-# -----------------------------
-def hf_generate(model_id, prompt):
-    url = f"https://api-inference.huggingface.co/models/{model_id}"
+def generate_image(prompt):
+    url = f"https://api-inference.huggingface.co/models/{model_id_img}"
     headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": max_new_tokens,
-            "temperature": temperature,
-            "top_p": top_p,
-            "do_sample": True,
-            "return_full_text": False
-        }
-    }
-    r = requests.post(url, headers=headers, json=payload, timeout=60)
+    payload = {"inputs": prompt}
+    r = requests.post(url, headers=headers, json=payload, timeout=120)
     r.raise_for_status()
-    data = r.json()
-    if isinstance(data, list) and data and "generated_text" in data[0]:
-        return data[0]["generated_text"]
-    if isinstance(data, dict) and "generated_text" in data:
-        return data["generated_text"]
-    if isinstance(data, dict) and "error" in data:
-        raise RuntimeError(data["error"])
-    return str(data)
+    # Hugging Face returns bytes in 'content'
+    img_bytes = BytesIO(r.content)
+    img = Image.open(img_bytes)
+    return img
 
 # -----------------------------
-# Chat input
+# User input
 # -----------------------------
-if prompt := st.chat_input("Ask me to write, debug, or explain Python code:"):
-    st.chat_message("user").write(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+tab1, tab2 = st.tabs(["Chat", "Text-to-Image"])
 
-    with st.spinner("Thinking..."):
-        try:
-            full_prompt = build_prompt(st.session_state.messages)
-            if use_openrouter:
-                reply = openrouter_generate(full_prompt)
-            else:
-                reply = hf_generate(hf_model_id, full_prompt)
-        except Exception as e:
-            st.error(f"API error: {e}")
-            reply = ""
+with tab1:
+    if prompt := st.chat_input("Ask me something..."):
+        st.chat_message("user").write(prompt)
+        st.session_state.messages.append({"role": "user", "content": prompt})
 
-    if reply:
+        with st.spinner("Thinking..."):
+            try:
+                full_prompt = build_prompt(st.session_state.messages)
+                reply = chat_generate(
+                    full_prompt,
+                    max_tokens=st.session_state.max_tokens,
+                    temperature=st.session_state.temperature,
+                )
+            except Exception as e:
+                reply = f"API error: {e}"
+
         st.chat_message("assistant").write(reply)
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
-st.caption("Tip: Smaller models are faster and more reliable on free API.")
+with tab2:
+    img_prompt = st.text_area("Enter prompt for image generation:")
+    if st.button("Generate Image"):
+        if img_prompt.strip():
+            with st.spinner("Generating image..."):
+                try:
+                    img = generate_image(img_prompt)
+                    st.image(img, caption="Generated image", use_column_width=True)
+                except Exception as e:
+                    st.error(f"Image API error: {e}")
+        else:
+            st.warning("Please enter a prompt for image generation.")
+
 
 
 
