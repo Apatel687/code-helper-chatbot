@@ -8,29 +8,24 @@ import streamlit as st
 # -----------------------------
 st.set_page_config(page_title="🧠 Code Helper Chatbot", page_icon="💻")
 st.title("🧠 Code Helper Chatbot")
-st.caption("Free tier: OpenRouter GPT-OSS for chat + Hugging Face Stable Diffusion for images")
+st.caption("Chat & Image generation using free APIs. Smaller models recommended.")
 
 # -----------------------------
-# Load API keys
+# Load API keys from secrets
 # -----------------------------
-def _read_key(name):
-    try:
-        key = st.secrets.get(name)
-        if key:
-            return key
-        gen = st.secrets.get("general")
-        if isinstance(gen, dict) and gen.get(name):
-            return gen.get(name)
-    except Exception:
-        pass
-    return os.environ.get(name)
+def _read_keys():
+    hf_key = st.secrets.get("HF_API_KEY") or os.environ.get("HF_API_KEY")
+    or_key = st.secrets.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
+    return hf_key, or_key
 
-OPENROUTER_KEY = _read_key("OPENROUTER_API_KEY")
-HF_KEY = _read_key("HF_API_KEY")
+HF_API_KEY, OR_API_KEY = _read_keys()
 
-if not OPENROUTER_KEY or not HF_KEY:
-    st.error("Both OPENROUTER_API_KEY and HF_API_KEY are required.")
+if not OR_API_KEY:
+    st.error("Set OPENROUTER_API_KEY in Streamlit Secrets or environment variable.")
     st.stop()
+
+if not HF_API_KEY:
+    st.warning("HF_API_KEY not found. Image generation will not work.")
 
 # -----------------------------
 # Sidebar controls
@@ -38,108 +33,114 @@ if not OPENROUTER_KEY or not HF_KEY:
 with st.sidebar:
     st.subheader("Model settings")
     chat_model_id = st.text_input(
-        "Chat model",
+        "Chat model ID",
         value="openai/gpt-oss-20b:free",
-        help="OpenRouter GPT-OSS 20B free tier"
+        help="Free GPT-OSS 20B via OpenRouter"
     )
     image_model_id = st.text_input(
-        "Image model",
-        value="stabilityai/stable-diffusion-2",
-        help="Hugging Face free Stable Diffusion model"
+        "Image model ID",
+        value="runwayml/stable-diffusion-v1-5",
+        help="Free HF text-to-image model"
     )
-    max_tokens = st.slider("Max tokens", 16, 512, 256, 16)
-    temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.1)
-    top_p = st.slider("Top-p", 0.1, 1.0, 0.95, 0.05)
+    max_tokens = st.slider("Max tokens (chat)", 16, 512, 256, 16)
+    temperature = st.slider("Temperature (chat)", 0.0, 1.5, 0.7, 0.1)
+    st.markdown("---")
+    st.caption("Tip: Smaller models = faster & reliable on free APIs.")
 
 # -----------------------------
-# Chat state
+# Chat session state
 # -----------------------------
 if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "system", "content": "You are a helpful Python assistant."}
-    ]
+    st.session_state.messages = [{"role": "system", "content": "You are a helpful assistant."}]
 
-# Show previous messages
+# Show history
 for m in st.session_state.messages:
     if m["role"] in ("user", "assistant"):
         st.chat_message(m["role"]).write(m["content"])
 
 # -----------------------------
-# Chat input
+# Build prompt for chat
 # -----------------------------
 def build_prompt(messages):
     parts = []
-    system = None
-    for m in messages:
-        if m["role"] == "system":
-            system = m["content"]
+    system = next((m["content"] for m in messages if m["role"]=="system"), None)
     if system:
         parts.append(f"System: {system}\n")
     for m in messages:
-        if m["role"] == "user":
+        if m["role"]=="user":
             parts.append(f"User: {m['content']}\n")
-        elif m["role"] == "assistant":
+        elif m["role"]=="assistant":
             parts.append(f"Assistant: {m['content']}\n")
     parts.append("Assistant:")
     return "\n".join(parts)
 
-def chat_generate(prompt: str):
-    url = f"https://openrouter.ai/api/v1/chat/completions"
+# -----------------------------
+# OpenRouter GPT API call
+# -----------------------------
+def generate_chat(prompt):
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {OR_API_KEY}"}
     payload = {
         "model": chat_model_id,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": max_tokens,
         "temperature": temperature,
-        "top_p": top_p
+        "max_tokens": max_tokens
     }
-    headers = {"Authorization": f"Bearer {OPENROUTER_KEY}"}
-    r = requests.post(url, headers=headers, json=payload, timeout=60)
-    r.raise_for_status()
-    data = r.json()
-    return data["choices"][0]["message"]["content"]
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    except Exception as e:
+        return f"API error: {e}"
 
 # -----------------------------
-# Text-to-Image
+# Hugging Face Image API call
 # -----------------------------
-def generate_image(prompt: str):
+def generate_image(prompt):
+    if not HF_API_KEY:
+        return None
     url = f"https://api-inference.huggingface.co/models/{image_model_id}"
-    headers = {"Authorization": f"Bearer {HF_KEY}"}
-    payload = {"inputs": prompt}
-    r = requests.post(url, headers=headers, json=payload, timeout=60)
-    r.raise_for_status()
-    return r.content
+    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+    payload = {
+        "inputs": prompt,
+        "parameters": {"num_inference_steps": 30, "guidance_scale": 7.5}
+    }
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        # Some HF image endpoints return base64 encoded image
+        if isinstance(data, dict) and "images" in data:
+            return data["images"][0]
+        return data
+    except Exception as e:
+        st.error(f"Image API error: {e}")
+        return None
 
 # -----------------------------
-# User input type
+# User input
 # -----------------------------
-option = st.radio("Choose input type:", ["Chat", "Generate Image"])
+mode = st.radio("Mode:", ["Chat", "Generate Image"])
 
-if option == "Chat":
-    if prompt := st.chat_input("Ask me anything about code or AI:"):
+if mode == "Chat":
+    if prompt := st.chat_input("Ask me anything..."):
         st.chat_message("user").write(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
 
         with st.spinner("Thinking..."):
-            try:
-                reply = chat_generate(prompt)
-            except Exception as e:
-                st.error(f"Chat API error: {e}")
-                reply = ""
-        if reply:
-            st.chat_message("assistant").write(reply)
-            st.session_state.messages.append({"role": "assistant", "content": reply})
+            reply = generate_chat(prompt)
+        st.chat_message("assistant").write(reply)
+        st.session_state.messages.append({"role": "assistant", "content": reply})
 
-elif option == "Generate Image":
-    prompt = st.text_input("Enter image description:")
-    if st.button("Generate Image") and prompt:
+elif mode == "Generate Image":
+    img_prompt = st.text_input("Enter image prompt:")
+    if st.button("Generate"):
         with st.spinner("Generating image..."):
-            try:
-                img_bytes = generate_image(prompt)
-                st.image(img_bytes)
-            except Exception as e:
-                st.error(f"Image API error: {e}")
+            image = generate_image(img_prompt)
+        if image:
+            st.image(image, caption=img_prompt)
 
-st.caption("Tip: Use free APIs. Chat uses OpenRouter GPT-OSS 20B; images use HF Stable Diffusion.")
 
 
 
